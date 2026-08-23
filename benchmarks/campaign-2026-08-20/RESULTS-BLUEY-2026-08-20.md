@@ -157,3 +157,29 @@ Patch A is a byte-complete replacement of the fork's `dspark_proposer.py` with t
 - `draft_sample_method` is a no-op for DSpark on this tree (drafter always argmaxes) — don't A/B it.
 - At T>0, acceptance is materially lower than at t=0 (prose 27.6% vs ~40%) because the drafter exports one-hot probabilities; Patch B fixes the mechanism but the gathers cost what they earn at k=5 — a temperature-scale sweep is the open follow-up.
 - Two fork issues to report upstream: `VLLM_USE_B12X_MHC=1` crashes at init (`Can't export tensors that require gradient`); and the drafter capture-size sharing (Patch A) is a genuine performance bug.
+
+| E12-compressed-mla | ABORT (wrong output + crash) | — | — | — | — | — | — | — | — | — | **0/6** | — |
+
+- **E12 09:12→09:19 — `VLLM_DSV4_B12X_COMPRESSED_MLA=1` @0.78: BROKEN.** Served, then **0/6 stable probes matched** (every answer different), then a `CUDA error: device-side assert triggered` during the garble gate killed the engine. The B12X alternative-kernel family is now fully accounted for on this image: mHC crashes at init, sparse indexer neutral, compressed MLA produces wrong output and crashes. None are usable.
+
+| E15b-STACK-rerun | 64.80 (+1.3%) | 40.71 | 89.70 | 67.18 | 41.36 | 85.03 | 59.29 | 1637† | 28.6† | **120.0 (+14%)** | 6/6 MATCH | 30/30 |
+
+- **E15b 09:22→09:43 — STACK re-measured (also the restore after E12): decode +1.3% (vs +1.8% first run — consistent), quality 6/6 again, c4 +14%.** †32K prefill read −10.6% inside the snapshot (reps 1709/1565) while 128K was normal (1625/1627); **three fresh 32K probes on the same lane immediately after: 1872 / 1774 / 1822 — baseline level.** Transient, not the config. Prefill verdict for the STACK: neutral. KV pool 1.47M.
+
+| E13-STACK+LL128 | 64.89 (+1.5%) | 39.96 | 87.53 | 70.16 | 40.64 | 86.14 | 60.00 | 1752 | 26.7 | 111.6 | 6/6* | 30/30 |
+
+- **E13 09:45→10:06 — STACK + `NCCL_PROTO=LL128 NCCL_ALGO=Ring`: no additional gain** (identical to STACK within noise; prefill −4%; 10 driver-OOM retries at profiling, the most of any boot). Interconnect axis closed: bandwidth (dual-HCA) null, protocol (LL128) null. *`seq` flip = the unstable probe.*
+
+| E14-patchB-scale0.5 | 63.05 (−1.4%) | 38.22 | 86.48 | 68.75 | 39.86 | 81.95 | 59.50 | 1820 | 25.7 | 102.8 | 6/6 MATCH | 30/30 |
+
+- **E14 10:08→10:30 — Patch B with `VLLM_DSPARK_DRAFT_TEMPERATURE_SCALE=0.5`: T=0.7 prose acceptance 29.17% (scale 1.0: 29.96%; baseline one-hot: 27.62%), 33.2 tok/s — no throughput gain at either scale.** Patch B closed: the mechanism is correct and worth ~+2 acceptance points for sampled requests, but at k=5 the full-vocab gathers cost what they earn. t=0 battery untouched, 6/6.
+
+| E16-STACK+indexer1024 | 63.16 (−1.3%) | 37.46 | 88.80 | 66.33 | 40.57 | 82.62 | 57.38 | 1807 | 25.9 | 106.2 | 6/6* | 30/30 |
+
+- **E16 10:32→10:53 — STACK + `VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=1024`: no gain.** 128K prefill 1622.8 tok/s (baseline 1,622) — the indexer logits budget is not the limiter at this depth. Not carried. **Queue exhausted.**
+
+## Deployment (Phase 2)
+
+- **Bluey pair**: winner restored 10:29–10:35 UTC, verified 6/6 probes, 30/30 garble, count-to-300 ≈ 84 tok/s. Launchers: `/var/tmp/rebuild-{head,worker}.STACK-WINNER.sh`, serve script `/var/tmp/ds4cmd.sh.STACK-WINNER`.
+- **Reddie pair (production, 512K)**: winner deployed 10:37–10:44 UTC via `/var/tmp/run-winner.sh <0|1>` on both nodes, gmu 0.76→0.78. **7/7 stable probes byte-identical to Reddie's own reference; count-to-300 87.8 / 87.1 / 89.3 tok/s vs 78–81 before (+10%)**; KV pool 1.35M tokens.
+- Operator runbook: `the operator runbook` (project folder).
