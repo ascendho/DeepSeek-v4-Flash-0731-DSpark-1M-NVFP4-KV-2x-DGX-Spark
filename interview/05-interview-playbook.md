@@ -31,9 +31,9 @@ flowchart TB
 
 | 亮点 | 面试中体现的能力 | 可引用材料 |
 | --- | --- | --- |
-| 双机分布式推理 | 能解释 TP=2、rank、权重可见性、GPU shard、NCCL 合并 | `explain/02-distributed-inference.md` |
-| 1M 上下文 | 能区分 YaRN ceiling、`max_model_len`、KV dtype、PagedAttention 和并发边界 | `explain/03-long-context-and-kv-cache.md` |
-| DSpark/vLLM 调试 | 能定位 speculative decoding、continuous batching、ragged context、prefill placeholder、shared expert loader | `explain/05-speculative-decoding.md`、`docs/PATCHES.md`、`DSPARK-SHARED-EXPERT-FIX.md` |
+| 双机分布式推理 | 能解释 TP=2、rank、权重可见性、GPU shard、NCCL 合并 | `02-distributed-inference.md` |
+| 1M 上下文 | 能区分 YaRN ceiling、`max_model_len`、KV dtype、PagedAttention 和并发边界 | `03-long-context-and-kv-cache.md` |
+| DSpark/vLLM 调试 | 能定位 speculative decoding、continuous batching、ragged context、prefill placeholder、shared expert loader | `04-speculative-decoding.md`、`docs/PATCHES.md`、`DSPARK-SHARED-EXPERT-FIX.md` |
 | 可复现验证 | 能用 smoke、sanity、runtime capture、benchmark 说明修复有效 | `README.md`、`DEFAULT-CONFIG.md`、`benchmarks/` |
 
 ## 4. 可展开故事
@@ -59,6 +59,7 @@ flowchart TB
 
 - `max_num_seqs=6` 不是 6 个请求都满 1M。
 - KV pool 看 `sum(live tokens across active requests)`。
+- 这里的并发共存主要指短/中上下文 agent 请求可用；多条满 1M 长文会排队或触发 preemption。
 - 1.5M 是历史压力实验，不是默认质量承诺。
 
 ### 故事 C：并发 bug 体现对 vLLM 调度语义的理解

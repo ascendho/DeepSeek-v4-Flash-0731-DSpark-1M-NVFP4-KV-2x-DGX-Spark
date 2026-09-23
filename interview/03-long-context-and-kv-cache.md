@@ -129,7 +129,43 @@ Maximum concurrency for 1,048,576 tokens per request: 1.81x
 
 的意思是“如果每个请求都满 1M，大约能容纳 1.81 个”，不是说短请求只能并发 1.81 个。
 
-## 7. 1M、并发和吞吐的关系
+## 7. 为什么多并发长文会排队
+
+更准确的说法不是“一条 1M 请求立刻占满 KV 池”，而是：**当请求真的增长到接近 1M live tokens 时，它会占用 KV pool 的大半；多条满长文并发会超过池容量，后续请求只能等，或者运行中的请求被 preempt 后回到等待队列。**
+
+以 README 记录的 1M / 6 profile 为例：
+
+```text
+GPU KV cache size: 1,901,239 tokens
+Maximum concurrency for 1,048,576 tokens per request: 1.81x
+```
+
+直观计算：
+
+```text
+1 条满 1M 请求 ~= 1,048,576 live tokens
+2 条满 1M 请求 ~= 2,097,152 live tokens
+6 条满 1M 请求 ~= 6,291,456 live tokens
+```
+
+所以一条满 1M 请求不是完全占满 `1,901,239` token 的 KV pool，但已经占用超过一半；两条满 1M 已经接近或超过这个 profile 的池容量；六条满 1M 明显不可能同时驻留。
+
+```mermaid
+flowchart TB
+  W["waiting requests"] --> S["vLLM scheduler"]
+  S --> K["shared KV pool"]
+  K --> F{"enough KV blocks"}
+  F -->|yes| R["running request"]
+  F -->|no| Q["stay in waiting queue"]
+  F -->|pressure on running| P["preempt a running request"]
+  P --> Q
+```
+
+在 vLLM scheduler 里，这个过程落在 `allocate_slots()`：如果当前请求需要的新 KV blocks 能分配，就进入或留在 `running`；如果分配失败，新请求会继续留在 `waiting`，或者为了给别的请求腾空间，已有 `running` 请求会被 `_preempt_request()` 放回等待队列。
+
+这也是为什么 `max_num_seqs=6` 仍然有意义：大多数 agent 请求远小于 1M，6 条 50K 或 200K 的请求通常能共用一个 KV pool；但它不是“6 条请求都能同时满 1M”的承诺。
+
+## 8. 1M、并发和吞吐的关系
 
 长上下文会影响两个阶段：
 
@@ -144,9 +180,9 @@ DSpark 的吞吐不是只看 decode step/s，而要看每步能接受多少 draf
 tokens/s = decode steps/s x accepted tokens per step
 ```
 
-这解释了为什么 shared expert loader 修复能显著提高吞吐：target model 仍保证输出正确，但 draft acceptance 下降会让 speculative decoding 退化。DSpark 的猜 token、验 token 和 acceptance 口径见 `05-speculative-decoding.md`。
+这解释了为什么 shared expert loader 修复能显著提高吞吐：target model 仍保证输出正确，但 draft acceptance 下降会让 speculative decoding 退化。DSpark 的猜 token、验 token 和 acceptance 口径见 `04-speculative-decoding.md`。
 
-## 8. 为什么不默认 1.5M
+## 9. 为什么不默认 1.5M
 
 仓库历史里有超过 1M 的实验，但默认应坚持 `1048576`：
 
@@ -159,14 +195,17 @@ tokens/s = decode steps/s x accepted tokens per step
 
 > 本项目默认支持 1M 上下文，因为它对齐模型 YaRN ceiling，并通过 NVFP4-MLA KV Cache (`nvfp4_ds_mla`)、PagedAttention、chunked prefill 和 prefix caching 管理内存与预填充压力。1.5M 是历史压力实验，不作为质量保证。
 
-## 9. 常见误解
+## 10. 常见误解
 
 | 误解 | 正确说法 |
 | --- | --- |
 | `MAX_MODEL_LEN=1M` 是任意调大的 | 不是，它对齐 DeepSeek V4 Flash 的 YaRN ceiling。 |
 | `max_num_seqs=6` 表示 6 个请求都能满 1M | 不是，KV pool 看活跃 token 总数。 |
+| chunked prefill 让长 prompt 不占 KV | 不会。它只是分块调度 prefill，完整长文最终仍需要对应 KV blocks。 |
+| prefix caching 能解决所有长文并发 | 不会。它只在请求共享相同前缀且 cache 命中时节省重复 prefill/KV。 |
 | 1M 主要靠权重分片实现 | 不准确。权重分片解决模型参数容量，1M 主要吃 KV cache。 |
 | KV cache 会在两台机器合成一份 | 不会。每个 TP rank 维护本 rank 需要的 KV blocks。 |
+| 两台机器的 KV pool 可以简单相加 | 不应这样算。TP rank 各自维护本 rank KV，服务容量以 vLLM 启动日志的 GPU KV cache size 和 maximum concurrency 为准。 |
 | 1.5M 和 1M 一样可靠 | 不应这样承诺，1.5M 超出校准范围。 |
 
 一句话记忆：**1M = YaRN ceiling + vLLM max_model_len + nvfp4_ds_mla + PagedAttention + chunked prefill + prefix caching；并发边界看 live tokens 总量，不看 max_num_seqs x 1M。**

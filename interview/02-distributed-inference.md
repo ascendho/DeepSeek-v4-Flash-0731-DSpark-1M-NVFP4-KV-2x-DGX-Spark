@@ -9,7 +9,7 @@
 - rank 是分布式进程组里的进程编号；本项目刚好 rank0 在 head，rank1 在 worker。
 - 推理数据面走 NCCL over RoCE/InfiniBand；HTTP 只存在于 client 到 head API。
 - 结果要合并，但合并的是 partial tensor 或 logits 候选，不是拼接两段自然语言。
-- DSpark 推测解码如何猜 token、验 token 和计算 acceptance，见 `05-speculative-decoding.md`。
+- DSpark 推测解码如何猜 token、验 token 和计算 acceptance，见 `04-speculative-decoding.md`。
 
 ## 1. 拓扑和 rank
 
